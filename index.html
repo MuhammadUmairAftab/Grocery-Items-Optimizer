@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Multi-Vendor Grocery Cart Optimizer</title>
+<style>
+:root{--bg:#f3f5f7;--ink:#17212b;--mute:#667085;--line:#e4e7ec;--brand:#0f766e;--ok:#15803d;--okbg:#dcfce7;--feebg:#fef3c7;--fee:#92400e}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "Segoe UI",system-ui,Roboto,Arial,sans-serif}
+header{background:linear-gradient(135deg,#0f766e,#134e4a);color:#fff;padding:24px 20px}
+.wrap{max-width:1080px;margin:0 auto}
+h1{margin:0;font-size:1.5rem}header p{margin:6px 0 0;opacity:.92}
+main.wrap{padding:20px 16px 36px;display:grid;gap:18px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+h2{margin:0 0 4px;font-size:1.1rem}.hint{color:var(--mute);margin:0 0 12px;font-size:.9rem}
+.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}
+th,td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:.78rem;text-transform:uppercase;letter-spacing:.5px;color:var(--mute)}
+input[type=number]{width:96px;padding:5px 7px;border:1px solid var(--line);border-radius:7px;font:inherit}
+input[type=checkbox]{width:17px;height:17px;accent-color:var(--brand)}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+button{font:inherit;border:1px solid var(--line);background:#fff;border-radius:9px;padding:9px 16px;cursor:pointer}
+button:hover{background:#f2f4f7}button.primary{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
+.err{background:#fef3f2;border:1px solid #fecdca;color:#b42318;padding:10px 14px;border-radius:9px;margin-top:12px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+.stat{border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:#fafbfc}
+.stat span{display:block;color:var(--mute);font-size:.8rem;text-transform:uppercase}.stat b{font-size:1.55rem}
+.stat.best{background:#ecfdf5;border-color:#a7f3d0}.stat.save{background:var(--brand);color:#fff}.stat.save span{color:#c9f2ec}
+.stat small{margin-left:8px}
+.badge{font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:99px;background:var(--okbg);color:var(--ok);margin-left:6px}
+tr.hl td{background:#f0fdf9;font-weight:600}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 14px}.tab.active{background:var(--brand);color:#fff;border-color:var(--brand)}
+.stores{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.store{border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.sh{display:flex;justify-content:space-between;align-items:center}.sh h3{margin:0}
+.pill{font-size:.72rem;font-weight:700;padding:3px 9px;border-radius:99px}.pill.ok{background:var(--okbg);color:var(--ok)}.pill.fee{background:var(--feebg);color:var(--fee)}
+.store ul{list-style:none;margin:10px 0;padding:0}.store li{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed var(--line)}
+.bar{height:7px;background:#eaecf0;border-radius:99px;overflow:hidden}.bar i{display:block;height:100%;background:var(--brand)}
+.store small{color:var(--mute)}.st{display:flex;justify-content:space-between;margin-top:10px;font-size:1.05rem}
+.moved{margin-top:14px;padding:12px 14px;border-radius:10px;background:#fffbeb;border:1px solid #fde68a}.moved h4{margin:0 0 6px}
+footer{color:var(--mute);font-size:.85rem;text-align:center;padding:0 16px 28px}
+</style></head><body>
+<header><div class="wrap"><h1>Multi-Vendor Grocery Cart Optimizer</h1><p>Pick your items. The optimizer finds the cheapest way to split them across stores, delivery fees included.</p></div></header>
+<main class="wrap">
+<section class="card"><h2>1. Choose items &amp; check prices</h2>
+<p class="hint">Tick the items in your cart. Edit any price (blank = store does not sell it) or the delivery rules.</p>
+<div class="scroll"><table id="catalog"></table></div>
+<h2 style="margin-top:16px">Delivery rules</h2><div class="scroll"><table id="rules"></table></div>
+<div class="actions"><button id="bAll">Select all</button><button id="bNone">Clear</button><button id="bReset">Reset data</button><button id="bRun" class="primary">Optimize my cart</button></div>
+<div id="err"></div></section>
+<section class="card" id="results" hidden><h2>2. Result</h2><div class="stats" id="summary"></div>
+<p id="note" class="hint" style="margin-top:12px"></p><div class="scroll"><table id="compare"></table></div></section>
+<section class="card" id="plan" hidden><h2>3. Your shopping list</h2>
+<p class="hint">Each card is one store: buy exactly these items there. Switch tabs to compare methods.</p>
+<div class="tabs" id="tabs"></div><div class="stores" id="stores"></div><div id="moved"></div></section>
+</main>
+<footer>Solvers: greedy, 0/1 knapsack DP heuristic, exact bitmask DP (hash-free arrays, O(V*3^n)), brute-force check.</footer>
+<script>
+// ---------- demo data (price null = store does not sell the item) ----------
+const VENDORS=[{name:'Krave',fee:150,thr:2000},{name:'Metro',fee:120,thr:1500},{name:'Daraz',fee:100,thr:700}];
+const ITEMS=[['Milk',280,270,290],['Bread',150,160,145],['Eggs',320,310,330],['Rice',450,470,440],['Oil',620,600,630],
+['Sugar',190,185,195],['Butter',340,335,345],['Tea',520,540,510],['Flour',260,250,null],['Chicken',780,760,null]];
+const DEFAULT=['Milk','Bread','Eggs','Rice','Oil','Sugar','Tea'];
+const INF=Infinity,MAX_EXACT=15,MAX_BRUTE=9;
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=n=>(n===INF||n==null)?'N/A':'Rs '+Number(n).toLocaleString('en-US',{maximumFractionDigits:2});
+const fmtT=ms=>ms<0.01?'<0.01 ms':ms.toFixed(2)+' ms';
+const showErr=m=>{$('#err').innerHTML=m?'<div class="err">'+esc(m)+'</div>':'';};
+let LAST=null;
+
+// ---------- cost model: item prices + fee for each used store under its free-delivery threshold ----------
+function evaluate(S,a){
+  const sub=S.V.map(()=>0);
+  for(let k=0;k<S.cart.length;k++){const p=S.P[S.cart[k]][a[k]];if(p===INF)return INF;sub[a[k]]+=p;}
+  let t=0;S.V.forEach((v,j)=>{t+=sub[j];if(sub[j]>0&&sub[j]<v.thr)t+=v.fee;});return t;
+}
+const subtotal=(S,a,j)=>S.cart.reduce((s,it,k)=>a[k]===j?s+S.P[it][j]:s,0);
+
+// ---------- Solver 1: naive greedy (cheapest store per item) ----------
+function greedy(S){
+  const a=S.cart.map(it=>{let b=INF,bj=0;S.V.forEach((v,j)=>{if(S.P[it][j]<b){b=S.P[it][j];bj=j;}});return bj;});
+  return{assign:a,total:evaluate(S,a)};
+}
+
+// ---------- Solver 2: greedy + 0/1 knapsack DP (min extra cost to reach a store's free-delivery threshold) ----------
+function knapsack(S){
+  let s=greedy(S);
+  S.V.forEach((v,j)=>{
+    const sub=subtotal(S,s.assign,j);if(sub<=0||sub>=v.thr)return;
+    const target=Math.ceil(v.thr-sub-1e-9);if(target<=0||target>200000)return;
+    const cand=[],wt=[],pen=[];
+    S.cart.forEach((it,k)=>{if(s.assign[k]===j)return;const p=S.P[it][j];if(p===INF)return;
+      const w0=Math.floor(p+1e-9);if(w0<=0)return;cand.push(k);wt.push(w0);pen.push(p-S.P[it][s.assign[k]]);});
+    const n=cand.length;if(!n)return;
+    let dp=new Float64Array(target+1).fill(INF);dp[0]=0;const from=[];
+    for(let i=0;i<n;i++){                       // dp[w] = cheapest extra cost to collect AT LEAST w units
+      const nd=dp.slice(),fr=new Int32Array(target+1).fill(-1);
+      for(let w=0;w<=target;w++){if(dp[w]===INF)continue;const nw=Math.min(target,w+wt[i]);
+        if(dp[w]+pen[i]<nd[nw]){nd[nw]=dp[w]+pen[i];fr[nw]=w;}}
+      dp=nd;from.push(fr);
+    }
+    if(dp[target]===INF)return;
+    const trial=s.assign.slice();let w=target;
+    for(let i=n-1;i>=0;i--){if(from[i][w]!==-1){trial[cand[i]]=j;w=from[i][w];}}
+    const tot=evaluate(S,trial);if(tot<s.total-1e-9)s={assign:trial,total:tot};   // keep only real improvements
+  });
+  return s;
+}
+
+// ---------- Solver 3: exact bitmask DP over item subsets (guaranteed optimal) ----------
+// cost[v][S] = cost if store v supplies exactly subset S; dp[M] = min over submasks S of M of dpPrev[M^S] + cost[v][S]
+function exact(S){
+  const n=S.cart.length,V=S.V.length,size=1<<n,full=size-1,cost=[];
+  for(let v=0;v<V;v++){
+    const sum=new Float64Array(size),c=new Float64Array(size);
+    for(let m=1;m<size;m++){
+      const low=31-Math.clz32(m&-m);sum[m]=sum[m&(m-1)]+S.P[S.cart[low]][v];
+      c[m]=sum[m]===INF?INF:sum[m]+(sum[m]<S.V[v].thr?S.V[v].fee:0);
+    }
+    cost.push(c);
+  }
+  const choice=[Int32Array.from({length:size},(_,m)=>m)];let prev=cost[0];
+  for(let v=1;v<V;v++){
+    const cur=new Float64Array(size).fill(INF),ch=new Int32Array(size);
+    for(let m=0;m<size;m++)for(let sub=m;;sub=(sub-1)&m){        // every submask of m
+      const c=prev[m^sub]+cost[v][sub];if(c<cur[m]){cur[m]=c;ch[m]=sub;}if(sub===0)break;
+    }
+    prev=cur;choice.push(ch);
+  }
+  const assign=new Array(n).fill(0),total=prev[full];if(total===INF)return{assign,total};
+  let m=full;for(let v=V-1;v>=0;v--){const sub=choice[v][m];for(let k=0;k<n;k++)if(sub&(1<<k))assign[k]=v;m^=sub;}
+  return{assign,total};
+}
+
+// ---------- brute force (only to verify the exact solver on small carts) ----------
+function brute(S){
+  const n=S.cart.length,V=S.V.length,a=new Array(n).fill(0);let best=INF;
+  for(;;){const t=evaluate(S,a);if(t<best)best=t;let i=0;while(i<n&&++a[i]===V){a[i]=0;i++;}if(i===n)break;}
+  return best;
+}
+
+function solve(S){
+  const run=(key,label,fn)=>{const t0=performance.now(),s=fn();s.key=key;s.label=label;s.ms=performance.now()-t0;return s;};
+  const out=[run('greedy','Naive greedy (baseline)',()=>greedy(S)),run('heuristic','Greedy + Knapsack DP heuristic',()=>knapsack(S))];
+  const n=S.cart.length,exactRan=n<=MAX_EXACT;
+  if(exactRan)out.push(run('exact','Exact Bitmask DP (optimal)',()=>exact(S)));
+  let verified=null;
+  if(exactRan&&n<=MAX_BRUTE&&Math.pow(S.V.length,n)<=2e6)verified=Math.abs(brute(S)-out[2].total)<1e-6;
+  return{methods:out,exactRan,verified,bestKey:exactRan?'exact':'heuristic'};
+}
+
+// ---------- UI ----------
+function renderInputs(){
+  let h='<thead><tr><th></th><th>Item</th>'+VENDORS.map(v=>'<th>'+esc(v.name)+'</th>').join('')+'</tr></thead><tbody>';
+  ITEMS.forEach((it,i)=>{
+    h+='<tr><td><input type="checkbox" class="sel" data-i="'+i+'"'+(DEFAULT.includes(it[0])?' checked':'')+'></td><td>'+esc(it[0])+'</td>';
+    for(let j=0;j<VENDORS.length;j++)h+='<td><input type="number" min="0" step="any" class="price" data-i="'+i+'" data-j="'+j+'" placeholder="-" value="'+(it[j+1]??'')+'"></td>';
+    h+='</tr>';
+  });
+  $('#catalog').innerHTML=h+'</tbody>';
+  $('#rules').innerHTML='<thead><tr><th>Store</th><th>Delivery fee</th><th>Free delivery above</th></tr></thead><tbody>'+
+    VENDORS.map((v,j)=>'<tr><td>'+esc(v.name)+'</td><td><input type="number" min="0" step="any" class="vfee" data-j="'+j+'" value="'+v.fee+'"></td><td><input type="number" min="0" step="any" class="vthr" data-j="'+j+'" value="'+v.thr+'"></td></tr>').join('')+'</tbody>';
+}
+
+function readState(){
+  const V=VENDORS.map((v,j)=>({name:v.name,fee:+($('.vfee[data-j="'+j+'"]').value||0),thr:+($('.vthr[data-j="'+j+'"]').value||0)}));
+  if(V.some(v=>!(v.fee>=0)||!(v.thr>=0)))throw new Error('Delivery fee and threshold must be numbers (0 or more).');
+  const P=ITEMS.map((it,i)=>VENDORS.map((v,j)=>{const x=$('.price[data-i="'+i+'"][data-j="'+j+'"]').value;
+    if(x==='')return INF;if(!(+x>=0))throw new Error('Prices must be numbers (0 or more).');return +x;}));
+  const cart=[];ITEMS.forEach((it,i)=>{if($('.sel[data-i="'+i+'"]').checked)cart.push(i);});
+  if(!cart.length)throw new Error('Tick at least one item first.');
+  for(const i of cart)if(P[i].every(p=>p===INF))throw new Error('"'+ITEMS[i][0]+'" is not sold by any store. Enter a price or untick it.');
+  return{V,P,cart};
+}
+
+function describe(S,sol,base){
+  const stores=[];
+  S.V.forEach((v,j)=>{
+    const items=[];let sub=0;
+    S.cart.forEach((it,k)=>{if(sol.assign[k]===j){const p=S.P[it][j];items.push({name:ITEMS[it][0],price:p});sub+=p;}});
+    if(items.length)stores.push({name:v.name,items,sub,thr:v.thr,free:sub>=v.thr,fee:sub>=v.thr?0:v.fee});
+  });
+  const moved=sol.key==='greedy'?[]:S.cart.map((it,k)=>({it,k})).filter(x=>sol.assign[x.k]!==base.assign[x.k]).map(x=>({
+    item:ITEMS[x.it][0],from:S.V[base.assign[x.k]].name,to:S.V[sol.assign[x.k]].name,
+    oldP:S.P[x.it][base.assign[x.k]],newP:S.P[x.it][sol.assign[x.k]]}));
+  return{stores,moved};
+}
+
+function storeCard(s){
+  const pct=s.thr>0?Math.min(100,s.sub/s.thr*100):100;
+  return'<div class="store"><div class="sh"><h3>'+esc(s.name)+'</h3><span class="pill '+(s.free?'ok':'fee')+'">'+(s.free?'FREE delivery':'Delivery '+fmt(s.fee))+'</span></div>'+
+  '<ul>'+s.items.map(i=>'<li><span>'+esc(i.name)+'</span><b>'+fmt(i.price)+'</b></li>').join('')+'</ul>'+
+  '<div class="bar"><i style="width:'+pct+'%"></i></div><small>'+fmt(s.sub)+' of '+fmt(s.thr)+' free-delivery threshold</small>'+
+  '<div class="st"><span>Store total</span><b>'+fmt(s.sub+s.fee)+'</b></div></div>';
+}
+
+function show(key){
+  const m=LAST.res.methods.find(x=>x.key===key),d=describe(LAST.S,m,LAST.res.methods[0]);
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.k===key));
+  $('#stores').innerHTML=d.stores.map(storeCard).join('');
+  $('#moved').innerHTML=d.moved.length?'<div class="moved"><h4>Items moved compared with the naive cheapest-price plan</h4>'+
+    d.moved.map(x=>'<div>'+esc(x.item)+': '+esc(x.from)+' ('+fmt(x.oldP)+') &rarr; '+esc(x.to)+' ('+fmt(x.newP)+')</div>').join('')+'</div>'
+    :(key!=='greedy'?'<div class="moved"><h4>No items moved</h4><div>The naive plan was already the best split for this cart.</div></div>':'');
+}
+
+function run(){
+  showErr('');let S;
+  try{S=readState();}catch(e){showErr(e.message);return;}
+  const res=solve(S);LAST={S,res};
+  const base=res.methods[0],best=res.methods.find(m=>m.key===res.bestKey),saved=base.total-best.total,pct=base.total>0?saved/base.total*100:0;
+  $('#summary').innerHTML='<div class="stat"><span>Naive plan</span><b>'+fmt(base.total)+'</b></div><div class="stat best"><span>Optimized plan</span><b>'+fmt(best.total)+
+    '</b></div><div class="stat save"><span>You save</span><b>'+fmt(saved)+'</b><small>'+pct.toFixed(1)+'%</small></div>';
+  const ex=res.methods.find(m=>m.key==='exact'),he=res.methods[1];let note='';
+  if(ex){const gap=he.total-ex.total;note+=gap>0.005?'The fast knapsack heuristic is '+fmt(gap)+' above the true optimum on this cart. ':'The knapsack heuristic matched the optimum on this cart. ';}
+  else note+='This cart has more than '+MAX_EXACT+' items, so the exact solver was skipped. ';
+  if(res.verified===true)note+='Exact result verified against brute force.';else if(res.verified===false)note+='WARNING: brute force disagreed with the exact solver.';
+  $('#note').textContent=note;
+  $('#compare').innerHTML='<thead><tr><th>Method</th><th>Total</th><th>Saved vs naive</th><th>Time</th></tr></thead><tbody>'+
+    res.methods.map(m=>'<tr class="'+(m.key===res.bestKey?'hl':'')+'"><td>'+esc(m.label)+(m.key==='exact'?'<span class="badge">OPTIMAL</span>':'')+'</td><td>'+fmt(m.total)+'</td><td>'+(m.key==='greedy'?'-':fmt(base.total-m.total))+'</td><td>'+fmtT(m.ms)+'</td></tr>').join('')+'</tbody>';
+  $('#tabs').innerHTML=res.methods.map(m=>'<button class="tab" data-k="'+m.key+'">'+esc(m.label)+'</button>').join('');
+  document.querySelectorAll('.tab').forEach(t=>{t.onclick=()=>show(t.dataset.k);});
+  $('#results').hidden=false;$('#plan').hidden=false;show(res.bestKey);
+  $('#results').scrollIntoView({behavior:'smooth'});
+}
+
+$('#bRun').onclick=run;$('#bReset').onclick=()=>{renderInputs();showErr('');};
+$('#bAll').onclick=()=>document.querySelectorAll('.sel').forEach(c=>c.checked=true);
+$('#bNone').onclick=()=>document.querySelectorAll('.sel').forEach(c=>c.checked=false);
+renderInputs();
+</script></body></html>
